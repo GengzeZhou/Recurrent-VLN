@@ -348,7 +348,7 @@ def new_simulator():
     sim.setCameraResolution(WIDTH, HEIGHT)
     sim.setCameraVFOV(math.radians(VFOV))
     sim.setDiscretizedViewingAngles(True)
-    sim.init()
+    sim.initialize()
 
     return sim
 
@@ -359,13 +359,13 @@ def get_point_angle_feature(baseViewId=0):
     base_heading = (baseViewId % 12) * math.radians(30)
     for ix in range(36):
         if ix == 0:
-            sim.newEpisode('ZMojNkEp431', '2f4d90acd4024c269fb0efe49a8ac540', 0, math.radians(-30))
+            sim.newEpisode(['ZMojNkEp431'], ['2f4d90acd4024c269fb0efe49a8ac540'], [0], [math.radians(-30)])
         elif ix % 12 == 0:
-            sim.makeAction(0, 1.0, 1.0)
+            sim.makeAction([0], [1.0], [1.0])
         else:
-            sim.makeAction(0, 1.0, 0)
+            sim.makeAction([0], [1.0], [0])
 
-        state = sim.getState()
+        state = sim.getState()[0]
         assert state.viewIndex == ix
 
         heading = state.heading - base_heading

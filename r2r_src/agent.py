@@ -23,6 +23,7 @@ import param
 from param import args
 from collections import defaultdict
 
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 class BaseAgent(object):
     ''' Base class for an R2R agent to generate and save trajectories. '''
@@ -81,14 +82,14 @@ class Seq2SeqAgent(BaseAgent):
 
     # For now, the agent can't pick which forward move to make - just the one in the middle
     env_actions = {
-      'left': (0,-1, 0), # left
-      'right': (0, 1, 0), # right
-      'up': (0, 0, 1), # up
-      'down': (0, 0,-1), # down
-      'forward': (1, 0, 0), # forward
-      '<end>': (0, 0, 0), # <end>
-      '<start>': (0, 0, 0), # <start>
-      '<ignore>': (0, 0, 0)  # <ignore>
+      'left': ([0],[-1], [0]), # left
+      'right': ([0], [1], [0]), # right
+      'up': ([0], [0], [1]), # up
+      'down': ([0], [0],[-1]), # down
+      'forward': ([1], [0], [0]), # forward
+      '<end>': ([0], [0], [0]), # <end>
+      '<start>': ([0], [0], [0]), # <start>
+      '<ignore>': ([0], [0], [0])  # <ignore>
     }
 
     def __init__(self, env, results_path, tok, episode_len=20):
@@ -195,7 +196,7 @@ class Seq2SeqAgent(BaseAgent):
         """
         def take_action(i, idx, name):
             if type(name) is int:       # Go to the next view
-                self.env.env.sims[idx].makeAction(name, 0, 0)
+                self.env.env.sims[idx].makeAction([name], [0], [0])
             else:                       # Adjust
                 self.env.env.sims[idx].makeAction(*self.env_actions[name])
 
@@ -216,13 +217,13 @@ class Seq2SeqAgent(BaseAgent):
                 while src_level > trg_level:    # Tune down
                     take_action(i, idx, 'down')
                     src_level -= 1
-                while self.env.env.sims[idx].getState().viewIndex != trg_point:    # Turn right until the target
+                while self.env.env.sims[idx].getState()[0].viewIndex != trg_point:    # Turn right until the target
                     take_action(i, idx, 'right')
                 assert select_candidate['viewpointId'] == \
-                       self.env.env.sims[idx].getState().navigableLocations[select_candidate['idx']].viewpointId
+                       self.env.env.sims[idx].getState()[0].navigableLocations[select_candidate['idx']].viewpointId
                 take_action(i, idx, select_candidate['idx'])
 
-                state = self.env.env.sims[idx].getState()
+                state = self.env.env.sims[idx].getState()[0]
                 if traj is not None:
                     traj[i]['path'].append((state.location.viewpointId, state.heading, state.elevation))
 

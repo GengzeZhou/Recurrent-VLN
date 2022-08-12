@@ -52,7 +52,7 @@ class EnvBatch():
             sim.setDiscretizedViewingAngles(True)   # Set increment/decrement to 30 degree. (otherwise by radians)
             sim.setCameraResolution(self.image_w, self.image_h)
             sim.setCameraVFOV(math.radians(self.vfov))
-            sim.init()
+            sim.initialize()
             self.sims.append(sim)
 
     def _make_id(self, scanId, viewpointId):
@@ -60,7 +60,7 @@ class EnvBatch():
 
     def newEpisodes(self, scanIds, viewpointIds, headings):
         for i, (scanId, viewpointId, heading) in enumerate(zip(scanIds, viewpointIds, headings)):
-            self.sims[i].newEpisode(scanId, viewpointId, heading, 0)
+            self.sims[i].newEpisode([scanId], [viewpointId], [heading], [0])
 
     def getStates(self):
         """
@@ -71,7 +71,7 @@ class EnvBatch():
         """
         feature_states = []
         for i, sim in enumerate(self.sims):
-            state = sim.getState()
+            state = sim.getState()[0]
 
             long_id = self._make_id(state.scanId, state.location.viewpointId)
             if self.features:
@@ -228,13 +228,13 @@ class R2RBatch():
         if long_id not in self.buffered_state_dict:
             for ix in range(36):
                 if ix == 0:
-                    self.sim.newEpisode(scanId, viewpointId, 0, math.radians(-30))
+                    self.sim.newEpisode([scanId], [viewpointId], [0], [math.radians(-30)])
                 elif ix % 12 == 0:
-                    self.sim.makeAction(0, 1.0, 1.0)
+                    self.sim.makeAction([0], [1.0], [1.0])
                 else:
-                    self.sim.makeAction(0, 1.0, 0)
+                    self.sim.makeAction([0], [1.0], [0])
 
-                state = self.sim.getState()
+                state = self.sim.getState()[0]
                 assert state.viewIndex == ix
 
                 # Heading and elevation for the viewpoint center
