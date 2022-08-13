@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch import optim
+from torch.nn.parallel import DistributedDataParallel as DDP
+from distributed import is_default_gpu
 import torch.nn.functional as F
 
 from env import R2RBatch
@@ -23,7 +25,7 @@ import param
 from param import args
 from collections import defaultdict
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
 
 class BaseAgent(object):
     ''' Base class for an R2R agent to generate and save trajectories. '''
@@ -89,22 +91,33 @@ class Seq2SeqAgent(BaseAgent):
       'forward': ([1], [0], [0]), # forward
       '<end>': ([0], [0], [0]), # <end>
       '<start>': ([0], [0], [0]), # <start>
-      '<ignore>': ([0], [0], [0])  # <ignore>
+      '<ignore>': ([0], [0], [0]),  # <ignore>
     }
 
-    def __init__(self, env, results_path, tok, episode_len=20):
+    def __init__(self, env, results_path="", episode_len=20, rank=0):
         super(Seq2SeqAgent, self).__init__(env, results_path)
-        self.tok = tok
+        self.args = args
+
         self.episode_len = episode_len
         self.feature_size = self.env.feature_size
 
+        self.default_gpu = is_default_gpu(self.args)
+        self.rank = rank
+        self.device = torch.device('cuda:%d'%self.rank)
+
         # Models
         if args.vlnbert == 'oscar':
-            self.vln_bert = model_OSCAR.VLNBERT(feature_size=self.feature_size + args.angle_feat_size).cuda()
-            self.critic = model_OSCAR.Critic().cuda()
+            self.vln_bert = model_OSCAR.VLNBERT(feature_size=self.feature_size + args.angle_feat_size).to(self.device)
+            self.critic = model_OSCAR.Critic().to(self.device)
         elif args.vlnbert == 'prevalent':
-            self.vln_bert = model_PREVALENT.VLNBERT(feature_size=self.feature_size + args.angle_feat_size).cuda()
-            self.critic = model_PREVALENT.Critic().cuda()
+            self.vln_bert = model_PREVALENT.VLNBERT(
+                feature_size=self.feature_size + args.angle_feat_size, device=self.device).to(self.device)
+            self.critic = model_PREVALENT.Critic().to(self.device)
+
+        if self.args.world_size > 1:
+            self.vln_bert = DDP(self.vln_bert, device_ids=[self.rank], find_unused_parameters=True)
+            self.critic = DDP(self.critic, device_ids=[self.rank], find_unused_parameters=True)
+
         self.models = (self.vln_bert, self.critic)
 
         # Optimizers
@@ -136,8 +149,8 @@ class Seq2SeqAgent(BaseAgent):
 
         token_type_ids = torch.zeros_like(mask)
 
-        return Variable(sorted_tensor, requires_grad=False).long().cuda(), \
-               mask.long().cuda(), token_type_ids.long().cuda(), \
+        return Variable(sorted_tensor, requires_grad=False).long().to(self.device), \
+               mask.long().to(self.device), token_type_ids.long().to(self.device), \
                list(seq_lengths), list(perm_idx)
 
     def _feature_variable(self, obs):
@@ -145,7 +158,7 @@ class Seq2SeqAgent(BaseAgent):
         features = np.empty((len(obs), args.views, self.feature_size + args.angle_feat_size), dtype=np.float32)
         for i, ob in enumerate(obs):
             features[i, :, :] = ob['feature']  # Image feat
-        return Variable(torch.from_numpy(features), requires_grad=False).cuda()
+        return Variable(torch.from_numpy(features), requires_grad=False).to(self.device)
 
     def _candidate_variable(self, obs):
         candidate_leng = [len(ob['candidate']) + 1 for ob in obs]  # +1 is for the end
@@ -156,13 +169,13 @@ class Seq2SeqAgent(BaseAgent):
             for j, cc in enumerate(ob['candidate']):
                 candidate_feat[i, j, :] = cc['feature']
 
-        return torch.from_numpy(candidate_feat).cuda(), candidate_leng
+        return torch.from_numpy(candidate_feat).to(self.device), candidate_leng
 
     def get_input_feat(self, obs):
         input_a_t = np.zeros((len(obs), args.angle_feat_size), np.float32)
         for i, ob in enumerate(obs):
             input_a_t[i] = utils.angle_feature(ob['heading'], ob['elevation'])
-        input_a_t = torch.from_numpy(input_a_t).cuda()
+        input_a_t = torch.from_numpy(input_a_t).to(self.device)
         # f_t = self._feature_variable(obs)      # Pano image features from obs
         candidate_feat, candidate_leng = self._candidate_variable(obs)
 
@@ -187,7 +200,7 @@ class Seq2SeqAgent(BaseAgent):
                 else:   # Stop here
                     assert ob['teacher'] == ob['viewpoint']         # The teacher action should be "STAY HERE"
                     a[i] = len(ob['candidate'])
-        return torch.from_numpy(a).cuda()
+        return torch.from_numpy(a).to(self.device)
 
     def make_equiv_action(self, a_t, perm_obs, perm_idx=None, traj=None):
         """
@@ -248,18 +261,13 @@ class Seq2SeqAgent(BaseAgent):
         # Language input
         sentence, language_attention_mask, token_type_ids, \
             seq_lengths, perm_idx = self._sort_batch(obs)
+        language_inputs = {'mode':         'language',
+                          'sentence':       sentence,
+                          'attention_mask': language_attention_mask,
+                          'lang_mask':      language_attention_mask,
+                          'token_type_ids': token_type_ids}
+        h_t = None
         perm_obs = obs[perm_idx]
-
-        ''' Language BERT '''
-        language_inputs = {'mode':        'language',
-                        'sentence':       sentence,
-                        'attention_mask': language_attention_mask,
-                        'lang_mask':      language_attention_mask,
-                        'token_type_ids': token_type_ids}
-        if args.vlnbert == 'oscar':
-            language_features = self.vln_bert(**language_inputs)
-        elif args.vlnbert == 'prevalent':
-            h_t, language_features = self.vln_bert(**language_inputs)
 
         # Record starting point
         traj = [{
@@ -290,25 +298,22 @@ class Seq2SeqAgent(BaseAgent):
 
             input_a_t, candidate_feat, candidate_leng = self.get_input_feat(perm_obs)
 
-            # the first [CLS] token, initialized by the language BERT, serves
-            # as the agent's state passing through time steps
-            if (t >= 1) or (args.vlnbert=='prevalent'):
-                language_features = torch.cat((h_t.unsqueeze(1), language_features[:,1:,:]), dim=1)
-
             visual_temp_mask = (utils.length2mask(candidate_leng) == 0).long()
             visual_attention_mask = torch.cat((language_attention_mask, visual_temp_mask), dim=-1)
 
-            self.vln_bert.vln_bert.config.directions = max(candidate_leng)
+            # self.vln_bert.vln_bert.config.directions = max(candidate_leng)
             ''' Visual BERT '''
-            visual_inputs = {'mode':              'visual',
-                            'sentence':           language_features,
-                            'attention_mask':     visual_attention_mask,
-                            'lang_mask':          language_attention_mask,
-                            'vis_mask':           visual_temp_mask,
-                            'token_type_ids':     token_type_ids,
-                            'action_feats':       input_a_t,
-                            # 'pano_feats':         f_t,
-                            'cand_feats':         candidate_feat}
+            visual_inputs = {
+                'mode':              'visual',
+                'state_feats':        h_t,
+                'sentence':           sentence,
+                'action_feats':       input_a_t,
+                'cand_feats':         candidate_feat,
+                'attention_mask':     visual_attention_mask,
+                'lang_mask':          language_attention_mask,
+                'vis_mask':           visual_temp_mask,
+                'token_type_ids':     token_type_ids,
+            }
             h_t, logit = self.vln_bert(**visual_inputs)
             hidden_states.append(h_t)
 
@@ -403,22 +408,22 @@ class Seq2SeqAgent(BaseAgent):
             # Last action in A2C
             input_a_t, candidate_feat, candidate_leng = self.get_input_feat(perm_obs)
 
-            language_features = torch.cat((h_t.unsqueeze(1), language_features[:,1:,:]), dim=1)
-
             visual_temp_mask = (utils.length2mask(candidate_leng) == 0).long()
             visual_attention_mask = torch.cat((language_attention_mask, visual_temp_mask), dim=-1)
 
-            self.vln_bert.vln_bert.config.directions = max(candidate_leng)
+            # self.vln_bert.vln_bert.config.directions = max(candidate_leng)
             ''' Visual BERT '''
-            visual_inputs = {'mode':              'visual',
-                            'sentence':           language_features,
-                            'attention_mask':     visual_attention_mask,
-                            'lang_mask':          language_attention_mask,
-                            'vis_mask':           visual_temp_mask,
-                            'token_type_ids':     token_type_ids,
-                            'action_feats':       input_a_t,
-                            # 'pano_feats':         f_t,
-                            'cand_feats':         candidate_feat}
+            visual_inputs = {
+                'mode':              'visual',
+                'state_feats':        h_t,
+                'sentence':           sentence,
+                'action_feats':       input_a_t,
+                'cand_feats':         candidate_feat,
+                'attention_mask':     visual_attention_mask,
+                'lang_mask':          language_attention_mask,
+                'vis_mask':           visual_temp_mask,
+                'token_type_ids':     token_type_ids,
+            }
             last_h_, _ = self.vln_bert(**visual_inputs)
 
             rl_loss = 0.
@@ -435,9 +440,9 @@ class Seq2SeqAgent(BaseAgent):
             total = 0
             for t in range(length-1, -1, -1):
                 discount_reward = discount_reward * args.gamma + rewards[t]  # If it ended, the reward will be 0
-                mask_ = Variable(torch.from_numpy(masks[t]), requires_grad=False).cuda()
+                mask_ = Variable(torch.from_numpy(masks[t]), requires_grad=False).to(self.device)
                 clip_reward = discount_reward.copy()
-                r_ = Variable(torch.from_numpy(clip_reward), requires_grad=False).cuda()
+                r_ = Variable(torch.from_numpy(clip_reward), requires_grad=False).to(self.device)
                 v_ = self.critic(hidden_states[t])
                 a_ = (r_ - v_).detach()
 

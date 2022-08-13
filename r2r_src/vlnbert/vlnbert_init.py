@@ -1,6 +1,6 @@
 # Recurrent VLN-BERT, 2020, by Yicong.Hong@anu.edu.au
 
-from transformers.pytorch_transformers import (BertConfig, BertTokenizer)
+from pytorch_transformers import (BertConfig, BertTokenizer)
 
 def get_tokenizer(args):
     if args.vlnbert == 'oscar':
@@ -33,7 +33,7 @@ def get_vlnbert_models(args, config=None):
     elif args.vlnbert == 'prevalent':
         from vlnbert.vlnbert_PREVALENT import VLNBert
         model_class = VLNBert
-        model_name_or_path = 'Prevalent/pretrained_model/pytorch_model.bin'
+        model_name_or_path = '/data/vlnce/project/VLN/pretrained_models/vlnbert_prevalent_model.bin'
         vis_config = config_class.from_pretrained('bert-base-uncased')
         vis_config.img_feature_dim = 2176
         vis_config.img_feature_type = ""

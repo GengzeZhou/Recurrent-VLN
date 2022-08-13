@@ -10,7 +10,7 @@ from param import args
 from vlnbert.vlnbert_init import get_vlnbert_models
 
 class VLNBERT(nn.Module):
-    def __init__(self, feature_size=2048+128):
+    def __init__(self, feature_size=2048+128, device=None):
         super(VLNBERT, self).__init__()
         print('\nInitalizing the VLN-BERT model ...')
 
@@ -32,27 +32,49 @@ class VLNBERT(nn.Module):
         self.state_proj = nn.Linear(hidden_size*2, hidden_size, bias=True)
         self.state_LayerNorm = BertLayerNorm(hidden_size, eps=layer_norm_eps)
 
-    def forward(self, mode, sentence, token_type_ids=None,
-                attention_mask=None, lang_mask=None, vis_mask=None,
-                position_ids=None, action_feats=None, pano_feats=None, cand_feats=None):
+        self.init_h_t = torch.nn.parameter.Parameter(
+            torch.zeros(args.batchSize, hidden_size, device=device), requires_grad=True)
+
+    def forward(self, 
+                mode, 
+                state_feats,
+                sentence,
+                action_feats=None, 
+                cand_feats=None,
+                token_type_ids=None,
+                attention_mask=None, 
+                lang_mask=None, 
+                vis_mask=None,
+                position_ids=None, 
+            ):
 
         if mode == 'language':
-            init_state, encoded_sentence = self.vln_bert(mode, sentence, attention_mask=attention_mask, lang_mask=lang_mask,)
-
-            return init_state, encoded_sentence
+            # init_state, encoded_sentence = self.vln_bert(mode, sentence, attention_mask=attention_mask, lang_mask=lang_mask,)
+            # return init_state, encoded_sentence
+            pass
 
         elif mode == 'visual':
+            if state_feats is None:
+                state_feats = self.init_h_t
 
-            state_action_embed = torch.cat((sentence[:,0,:], action_feats), 1)
+            self.vln_bert.config.directions = cand_feats.size(1)
+
+            state_action_embed = torch.cat((state_feats, action_feats), dim=1)
             state_with_action = self.action_state_project(state_action_embed)
             state_with_action = self.action_LayerNorm(state_with_action)
-            state_feats = torch.cat((state_with_action.unsqueeze(1), sentence[:,1:,:]), dim=1)
 
             cand_feats[..., :-args.angle_feat_size] = self.drop_env(cand_feats[..., :-args.angle_feat_size])
 
             # logit is the attention scores over the candidate features
-            h_t, logit, attended_language, attended_visual = self.vln_bert(mode, state_feats,
-                attention_mask=attention_mask, lang_mask=lang_mask, vis_mask=vis_mask, img_feats=cand_feats)
+            h_t, logit, attended_language, attended_visual = self.vln_bert(
+                mode, 
+                state_with_action,
+                sentence,
+                attention_mask=attention_mask, 
+                lang_mask=lang_mask, 
+                vis_mask=vis_mask, 
+                img_feats=cand_feats,
+            )
 
             # update agent's state, unify history, language and vision by elementwise product
             vis_lang_feat = self.vis_lang_LayerNorm(attended_language * attended_visual)

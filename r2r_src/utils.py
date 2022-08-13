@@ -3,7 +3,7 @@
 import os
 import sys
 import re
-sys.path.append('Matterport_Simulator/build/')
+sys.path.append('/data/vlnce/Matterport3DSimulator/build')
 import MatterSim
 import string
 import json
@@ -55,19 +55,10 @@ def load_datasets(splits):
         if the split is "something@5000", it will use a random 5000 data from the data
     :return:
     """
-    import random
     data = []
-    old_state = random.getstate()
     for split in splits:
-        # It only needs some part of the dataset?
-        components = split.split("@")
-        number = -1
-        if len(components) > 1:
-            split, number = components[0], int(components[1])
 
         # Load Json
-        # if split in ['train', 'val_seen', 'val_unseen', 'test',
-        #              'val_unseen_half1', 'val_unseen_half2', 'val_seen_half1', 'val_seen_half2']:       # Add two halves for sanity check
         if "/" not in split:
             with open('data/R2R_%s.json' % split) as f:
                 new_data = json.load(f)
@@ -76,15 +67,8 @@ def load_datasets(splits):
             with open(split) as f:
                 new_data = json.load(f)
 
-        # Partition
-        if number > 0:
-            random.seed(0)              # Make the data deterministic, additive
-            random.shuffle(new_data)
-            new_data = new_data[:number]
-
         # Join
         data += new_data
-    random.setstate(old_state)      # Recover the state of the random generator
     return data
 
 
@@ -271,7 +255,7 @@ def read_img_features(feature_store, test_only=False):
             reader = csv.DictReader(tsv_in_file, delimiter='\t', fieldnames=tsv_fieldnames)
             for item in reader:
                 long_id = item['scanId'] + "_" + item['viewpointId']
-                features[long_id] = np.frombuffer(base64.decodestring(item['features'].encode('ascii')),
+                features[long_id] = np.frombuffer(base64.b64decode(item['features'].encode('ascii')),
                                                    dtype=np.float32).reshape((views, -1))   # Feature of long_id is (36, 2048)
     else:
         features = None
@@ -672,3 +656,58 @@ class DTW(object):
 
     success = self.distance[prediction[-1]][reference[-1]] <= self.threshold
     return success * ndtw
+
+
+import random
+def setup_seed():
+    torch.manual_seed(1)
+    torch.cuda.manual_seed(1)
+    random.seed(0)
+    np.random.seed(0)
+
+
+from vlnbert.vlnbert_init import get_tokenizer
+def prepare_dataset(args, splits=[], allocate_rank=None,):
+    # Create a batch training environment that will also preprocess text
+    tok_bert = get_tokenizer(args)
+    
+    data = []
+
+    for split in splits:
+        for i_item, item in enumerate(load_datasets([split])):
+            if args.test_only and i_item == 64:
+                break
+            if "/" in split:
+                new_item = dict(item)
+                new_item['instr_id'] = item['path_id']
+                new_item['instructions'] = item['instructions'][0]
+                new_item['instr_encoding'] = item['instr_enc']
+                if new_item['instr_encoding'] is not None:  # Filter the wrong data
+                    data.append(new_item)
+            else:
+                # Split multiple instructions into separate entries
+                for j, instr in enumerate(item['instructions']):
+                    new_item = dict(item)
+                    new_item['instr_id'] = '%s_%d' % (item['path_id'], j)
+                    new_item['instructions'] = instr
+
+                    ''' BERT tokenizer '''
+                    instr_tokens = tok_bert.tokenize(instr)
+                    padded_instr_tokens, num_words = pad_instr_tokens(instr_tokens, args.maxInput)
+                    new_item['instr_encoding'] = tok_bert.convert_tokens_to_ids(padded_instr_tokens)
+
+                    if new_item['instr_encoding'] is not None:  # Filter the wrong data
+                        data.append(new_item)
+
+    # in validation, we would split the data
+    if allocate_rank is not None and args.world_size > 1:
+        t_split, n_splits = allocate_rank, args.world_size
+        ndata_per_split = len(data) // n_splits 
+        start_idx = ndata_per_split * t_split
+        if t_split == n_splits - 1:
+            end_idx = None
+        else:
+            end_idx = start_idx + ndata_per_split
+        data = data[start_idx: end_idx]
+
+    return data

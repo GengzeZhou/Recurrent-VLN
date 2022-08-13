@@ -14,7 +14,7 @@ import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
 
-from transformers.pytorch_transformers.modeling_bert import BertPreTrainedModel, BertConfig
+from pytorch_transformers.modeling_bert import BertPreTrainedModel, BertConfig
 import pdb
 
 logger = logging.getLogger(__name__)
@@ -304,42 +304,41 @@ class LXRTXLayer(nn.Module):
         self.visual_attention = BertXAttention(config)
 
     def cross_att(self, lang_input, lang_attention_mask, visn_input, visn_attention_mask):
-        ''' Cross Attention -- cross for vision not for language '''
-        visn_att_output, attention_scores = self.visual_attention(visn_input, lang_input, ctx_att_mask=lang_attention_mask)
-        return visn_att_output, attention_scores
+        lang_att_output, lang_att_score = self.visual_attention(
+            lang_input, visn_input, ctx_att_mask=visn_attention_mask)
+        visn_att_output, vis_att_score = self.visual_attention(
+            visn_input, lang_input, ctx_att_mask=lang_attention_mask)
+        return lang_att_output, lang_att_score, visn_att_output, vis_att_score
 
-    def self_att(self, visn_input, visn_attention_mask):
-        ''' Self Attention -- on visual features with language clues '''
+    def self_att(self, lang_input, lang_attention_mask, visn_input, visn_attention_mask):
+        lang_att_output = self.lang_self_att(lang_input, lang_attention_mask)
         visn_att_output = self.visn_self_att(visn_input, visn_attention_mask)
-        return visn_att_output
+        return lang_att_output, visn_att_output
 
-    def output_fc(self, visn_input):
-        ''' Feed forward '''
+    def output_fc(self, lang_input, visn_input):
+        # FC layers
+        lang_inter_output = self.lang_inter(lang_input)
         visn_inter_output = self.visn_inter(visn_input)
+        # Layer output
+        lang_output = self.lang_output(lang_inter_output, lang_input)
         visn_output = self.visn_output(visn_inter_output, visn_input)
-        return visn_output
+        return lang_output, visn_output
 
     def forward(self, lang_feats, lang_attention_mask,
                       visn_feats, visn_attention_mask, tdx):
 
-        ''' visual self-attention with state '''
-        visn_att_output = torch.cat((lang_feats[:, 0:1, :], visn_feats), dim=1)
-        state_vis_mask = torch.cat((lang_attention_mask[:,:,:,0:1], visn_attention_mask), dim=-1)
+        lang_att_output, lang_att_score, visn_att_output, vis_att_score = self.cross_att(
+            lang_feats, lang_attention_mask, visn_feats, visn_attention_mask)
 
-        ''' state and vision attend to language '''
-        visn_att_output, cross_attention_scores = self.cross_att(lang_feats[:, 1:, :], lang_attention_mask[:, :, :, 1:], visn_att_output, state_vis_mask)
+        lang_att_output, visn_att_output = self.self_att(
+            lang_att_output, lang_attention_mask, visn_att_output, visn_attention_mask)
 
-        language_attention_scores = cross_attention_scores[:, :, 0, :]
+        lang_output, visn_output = self.output_fc(lang_att_output[0], visn_att_output[0])
 
-        state_visn_att_output = self.self_att(visn_att_output, state_vis_mask)
-        state_visn_output = self.output_fc(state_visn_att_output[0])
+        visual_attention_scores = visn_att_output[1][:, :, 0, :]
+        language_attention_scores = lang_att_output[1][:, :, 0, 1:]
 
-        visn_att_output = state_visn_output[:, 1:, :]
-        lang_att_output = torch.cat((state_visn_output[:, 0:1, :], lang_feats[:,1:,:]), dim=1)
-
-        visual_attention_scores = state_visn_att_output[1][:, :, 0, 1:]
-
-        return lang_att_output, visn_att_output, language_attention_scores, visual_attention_scores
+        return lang_output, visn_output, language_attention_scores, visual_attention_scores
 
 
 class VisionEncoder(nn.Module):
@@ -379,17 +378,21 @@ class VLNBert(BertPreTrainedModel):
         self.addlayer = nn.ModuleList(
             [LXRTXLayer(config) for _ in range(self.vl_layers)])
         self.vision_encoder = VisionEncoder(self.config.img_feature_dim, self.config)
-        self.apply(self.init_weights)
+        # self.apply()
+        self.init_weights()
 
-    def forward(self, mode, input_ids, token_type_ids=None,
-        attention_mask=None, lang_mask=None, vis_mask=None, position_ids=None, head_mask=None, img_feats=None):
-
-        attention_mask = lang_mask
+    def forward(self, 
+            mode, state_feats, sentence, 
+            token_type_ids=None,
+            attention_mask=None, lang_mask=None, vis_mask=None, position_ids=None, 
+            head_mask=None,
+            img_feats=None,
+        ):
 
         if token_type_ids is None:
-            token_type_ids = torch.zeros_like(input_ids)
+            token_type_ids = torch.zeros_like(sentence)
 
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        extended_attention_mask = lang_mask.unsqueeze(1).unsqueeze(2)
 
         extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
@@ -397,31 +400,34 @@ class VLNBert(BertPreTrainedModel):
         head_mask = [None] * self.config.num_hidden_layers
 
         if mode == 'language':
-            ''' LXMERT language branch (in VLN only perform this at initialization) '''
-            embedding_output = self.embeddings(input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
-            text_embeds = embedding_output
+            pass
+            # ''' LXMERT language branch (in VLN only perform this at initialization) '''
+            # embedding_output = self.embeddings(input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
+            # text_embeds = embedding_output
+            # for layer_module in self.lalayer:
+            #     temp_output = layer_module(text_embeds, extended_attention_mask)
+            #     text_embeds = temp_output[0]
+            # sequence_output = text_embeds
+            # pooled_output = self.pooler(sequence_output)
+            # return pooled_output, sequence_output
 
+        elif mode == 'visual':
+
+            embedding_output = self.embeddings(
+                sentence, position_ids=position_ids, token_type_ids=token_type_ids)
+            text_embeds = embedding_output
             for layer_module in self.lalayer:
                 temp_output = layer_module(text_embeds, extended_attention_mask)
                 text_embeds = temp_output[0]
 
-            sequence_output = text_embeds
-            pooled_output = self.pooler(sequence_output)
-
-            return pooled_output, sequence_output
-
-        elif mode == 'visual':
-            ''' LXMERT visual branch (no language processing during navigation) '''
-            text_embeds = input_ids
-
+            text_embeds = torch.cat((state_feats.unsqueeze(1), text_embeds[:,1:,:]), dim=1)
             text_mask = extended_attention_mask
 
             img_embedding_output = self.vision_encoder(img_feats)
+
             img_seq_len = img_feats.shape[1]
             batch_size = text_embeds.size(0)
-
             img_seq_mask = vis_mask
-
             extended_img_mask = img_seq_mask.unsqueeze(1).unsqueeze(2)
             extended_img_mask = extended_img_mask.to(dtype=next(self.parameters()).dtype)  # fp16 compatibility
             extended_img_mask = (1.0 - extended_img_mask) * -10000.0
@@ -431,7 +437,9 @@ class VLNBert(BertPreTrainedModel):
             visn_output = img_embedding_output
 
             for tdx, layer_module in enumerate(self.addlayer):
-                lang_output, visn_output, language_attention_scores, visual_attention_scores = layer_module(lang_output, text_mask, visn_output, img_mask, tdx)
+                lang_output, visn_output, \
+                language_attention_scores, visual_attention_scores = layer_module(
+                    lang_output, text_mask, visn_output, img_mask, tdx)
 
             sequence_output = lang_output
             pooled_output = self.pooler(sequence_output)
