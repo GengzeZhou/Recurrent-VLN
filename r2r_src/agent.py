@@ -266,7 +266,8 @@ class Seq2SeqAgent(BaseAgent):
                           'attention_mask': language_attention_mask,
                           'lang_mask':      language_attention_mask,
                           'token_type_ids': token_type_ids}
-        h_t = None
+        h_t, _ = self.vln_bert(**language_inputs)
+        
         perm_obs = obs[perm_idx]
 
         # Record starting point

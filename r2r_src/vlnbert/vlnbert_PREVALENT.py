@@ -335,7 +335,7 @@ class LXRTXLayer(nn.Module):
 
         lang_output, visn_output = self.output_fc(lang_att_output[0], visn_att_output[0])
 
-        visual_attention_scores = visn_att_output[1][:, :, 0, :]
+        visual_attention_scores = visn_att_output[1][:, :, 0, 1:]
         language_attention_scores = lang_att_output[1][:, :, 0, 1:]
 
         return lang_output, visn_output, language_attention_scores, visual_attention_scores
@@ -382,7 +382,7 @@ class VLNBert(BertPreTrainedModel):
         self.init_weights()
 
     def forward(self, 
-            mode, state_feats, sentence, 
+            mode, sentence, state_feats=None, 
             token_type_ids=None,
             attention_mask=None, lang_mask=None, vis_mask=None, position_ids=None, 
             head_mask=None,
@@ -400,41 +400,48 @@ class VLNBert(BertPreTrainedModel):
         head_mask = [None] * self.config.num_hidden_layers
 
         if mode == 'language':
-            pass
-            # ''' LXMERT language branch (in VLN only perform this at initialization) '''
-            # embedding_output = self.embeddings(input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
-            # text_embeds = embedding_output
-            # for layer_module in self.lalayer:
-            #     temp_output = layer_module(text_embeds, extended_attention_mask)
-            #     text_embeds = temp_output[0]
-            # sequence_output = text_embeds
-            # pooled_output = self.pooler(sequence_output)
-            # return pooled_output, sequence_output
+            ''' LXMERT language branch (in VLN only perform this at initialization) '''
+            embedding_output = self.embeddings(sentence, position_ids=position_ids, token_type_ids=token_type_ids)
+            text_embeds = embedding_output
+            for layer_module in self.lalayer:
+                temp_output = layer_module(text_embeds, extended_attention_mask)
+                text_embeds = temp_output[0]
+            sequence_output = text_embeds
+            pooled_output = self.pooler(sequence_output)
+            return pooled_output, sequence_output
 
         elif mode == 'visual':
 
             embedding_output = self.embeddings(
                 sentence, position_ids=position_ids, token_type_ids=token_type_ids)
             text_embeds = embedding_output
+
+            # use state to replace the fresh [cls]
+            text_embeds = torch.cat((state_feats.unsqueeze(1), text_embeds[:,1:,:]), dim=1)
+
             for layer_module in self.lalayer:
                 temp_output = layer_module(text_embeds, extended_attention_mask)
                 text_embeds = temp_output[0]
+            # pool the updated state
+            text_state_feats = self.pooler(text_embeds)
+            lang_output = torch.cat((text_state_feats.unsqueeze(1), text_embeds[:,1:,:]), dim=1)
 
-            text_embeds = torch.cat((state_feats.unsqueeze(1), text_embeds[:,1:,:]), dim=1)
-            text_mask = extended_attention_mask
-
+            # image processing
             img_embedding_output = self.vision_encoder(img_feats)
-
+            visn_output = torch.cat((state_feats.unsqueeze(1), img_embedding_output), dim=1)
             img_seq_len = img_feats.shape[1]
+
             batch_size = text_embeds.size(0)
-            img_seq_mask = vis_mask
+            text_mask = extended_attention_mask
+            # expand 1 to include the state token in visual-self-attention
+            img_seq_mask = torch.concat((torch.ones(vis_mask.size(0),1).long().to(vis_mask.device),vis_mask), dim=1)
             extended_img_mask = img_seq_mask.unsqueeze(1).unsqueeze(2)
             extended_img_mask = extended_img_mask.to(dtype=next(self.parameters()).dtype)  # fp16 compatibility
             extended_img_mask = (1.0 - extended_img_mask) * -10000.0
             img_mask = extended_img_mask
 
-            lang_output = text_embeds
-            visn_output = img_embedding_output
+            # lang_output = text_embeds
+            # visn_output = img_embedding_output
 
             for tdx, layer_module in enumerate(self.addlayer):
                 lang_output, visn_output, \

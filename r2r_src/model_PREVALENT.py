@@ -21,24 +21,24 @@ class VLNBERT(nn.Module):
         layer_norm_eps = self.vln_bert.config.layer_norm_eps
 
         self.action_state_project = nn.Sequential(
-            nn.Linear(hidden_size+args.angle_feat_size, hidden_size), nn.Tanh())
+            nn.Linear(hidden_size+args.angle_feat_size, hidden_size), 
+            nn.GELU(),
+        )
         self.action_LayerNorm = BertLayerNorm(hidden_size, eps=layer_norm_eps)
 
         self.drop_env = nn.Dropout(p=args.featdropout)
-        self.img_projection = nn.Linear(feature_size, hidden_size, bias=True)
-        self.cand_LayerNorm = BertLayerNorm(hidden_size, eps=layer_norm_eps)
 
         self.vis_lang_LayerNorm = BertLayerNorm(hidden_size, eps=layer_norm_eps)
-        self.state_proj = nn.Linear(hidden_size*2, hidden_size, bias=True)
+        self.state_proj = nn.Sequential(
+            nn.Linear(hidden_size*2, hidden_size, bias=True),
+            nn.GELU(),
+        )
         self.state_LayerNorm = BertLayerNorm(hidden_size, eps=layer_norm_eps)
-
-        self.init_h_t = torch.nn.parameter.Parameter(
-            torch.zeros(args.batchSize, hidden_size, device=device), requires_grad=True)
 
     def forward(self, 
                 mode, 
-                state_feats,
                 sentence,
+                state_feats=None,
                 action_feats=None, 
                 cand_feats=None,
                 token_type_ids=None,
@@ -49,13 +49,12 @@ class VLNBERT(nn.Module):
             ):
 
         if mode == 'language':
-            # init_state, encoded_sentence = self.vln_bert(mode, sentence, attention_mask=attention_mask, lang_mask=lang_mask,)
-            # return init_state, encoded_sentence
-            pass
+            init_state, encoded_sentence = self.vln_bert(
+                mode, sentence, attention_mask=attention_mask, lang_mask=lang_mask,)
+            return init_state, encoded_sentence
+            # pass
 
         elif mode == 'visual':
-            if state_feats is None:
-                state_feats = self.init_h_t
 
             self.vln_bert.config.directions = cand_feats.size(1)
 
@@ -67,9 +66,9 @@ class VLNBERT(nn.Module):
 
             # logit is the attention scores over the candidate features
             h_t, logit, attended_language, attended_visual = self.vln_bert(
-                mode, 
-                state_with_action,
+                mode,
                 sentence,
+                state_feats=state_with_action,
                 attention_mask=attention_mask, 
                 lang_mask=lang_mask, 
                 vis_mask=vis_mask, 
