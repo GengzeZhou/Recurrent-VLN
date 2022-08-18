@@ -448,7 +448,8 @@ class VLNBert(BertPreTrainedModel):
                 language_attention_scores, visual_attention_scores = layer_module(
                     lang_output, text_mask, visn_output, img_mask, tdx)
 
-            sequence_output = lang_output
+            # use visual state
+            sequence_output = visn_output
             pooled_output = self.pooler(sequence_output)
 
             language_state_scores = language_attention_scores.mean(dim=1)
