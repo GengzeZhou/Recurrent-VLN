@@ -10,11 +10,11 @@ from param import args
 from vlnbert.vlnbert_init import get_vlnbert_models
 
 class VLNBERT(nn.Module):
-    def __init__(self, feature_size=2048+128):
+    def __init__(self, feature_size=2048+128, device=None):
         super(VLNBERT, self).__init__()
         print('\nInitalizing the VLN-BERT model ...')
 
-        self.vln_bert = get_vlnbert_models(args, config=None)  # initialize the VLN-BERT
+        self.vln_bert = get_vlnbert_models(args)  # initialize the VLN-BERT
         self.vln_bert.config.directions = 4  # a preset random number
 
         hidden_size = self.vln_bert.config.hidden_size

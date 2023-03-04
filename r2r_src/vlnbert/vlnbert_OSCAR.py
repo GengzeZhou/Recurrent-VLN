@@ -9,7 +9,7 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss, MSELoss
 
-from transformers.pytorch_transformers.modeling_bert import (BertEmbeddings,
+from pytorch_transformers.modeling_bert import (BertEmbeddings,
         BertSelfAttention, BertAttention, BertEncoder, BertLayer,
         BertSelfOutput, BertIntermediate, BertOutput,
         BertPooler, BertLayerNorm, BertPreTrainedModel,

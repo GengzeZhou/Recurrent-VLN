@@ -1,14 +1,19 @@
-name=VLNBERT-train-Prevalent
+name=Reborn-1.0
+NUM_GPUS=1
 
 flag="--vlnbert prevalent
 
       --aug data/prevalent/prevalent_aug.json
       --test_only 0
+      --log_every 2000
 
-      --train auglistener
+      --world_size 1
 
-      --features places365
-      --maxAction 15
+      --train train
+
+      --features pano
+      --feature_size 768
+      --maxAction 20
       --batchSize 8
       --feedback sample
       --lr 1e-5
@@ -22,4 +27,5 @@ flag="--vlnbert prevalent
       --dropout 0.5"
 
 mkdir -p snap/$name
-CUDA_VISIBLE_DEVICES=1 python r2r_src/train.py $flag --name $name
+# CUDA_VISIBLE_DEVICES=2 python r2r_src/train.py $flag --name $name
+CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=${NUM_GPUS} r2r_src/train.py $flag --name $name

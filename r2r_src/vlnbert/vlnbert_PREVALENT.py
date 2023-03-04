@@ -14,7 +14,7 @@ import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
 
-from transformers.pytorch_transformers.modeling_bert import BertPreTrainedModel, BertConfig
+from pytorch_transformers import BertPreTrainedModel, BertConfig
 import pdb
 
 logger = logging.getLogger(__name__)
@@ -379,7 +379,8 @@ class VLNBert(BertPreTrainedModel):
         self.addlayer = nn.ModuleList(
             [LXRTXLayer(config) for _ in range(self.vl_layers)])
         self.vision_encoder = VisionEncoder(self.config.img_feature_dim, self.config)
-        self.apply(self.init_weights)
+        # self.apply(self.init_weights)
+        self.init_weights()
 
     def forward(self, mode, input_ids, token_type_ids=None,
         attention_mask=None, lang_mask=None, vis_mask=None, position_ids=None, head_mask=None, img_feats=None):
