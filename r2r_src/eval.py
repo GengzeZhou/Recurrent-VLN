@@ -17,22 +17,21 @@ from agent import BaseAgent
 class Evaluation(object):
     ''' Results submission format:  [{'instr_id': string, 'trajectory':[(viewpoint_id, heading_rads, elevation_rads),] } ] '''
 
-    def __init__(self, splits, scans, tok):
+    def __init__(self, splits, scans, data=None):
         self.error_margin = 3.0
         self.splits = splits
-        self.tok = tok
         self.gt = {}
-        self.instr_ids = []
+        instr_ids = []
         self.scans = []
         for split in splits:
-            for item in load_datasets([split]):
+            for item in data:
                 if scans is not None and item['scan'] not in scans:
                     continue
                 self.gt[str(item['path_id'])] = item
                 self.scans.append(item['scan'])
-                self.instr_ids += ['%s_%d' % (item['path_id'], i) for i in range(len(item['instructions']))]
+                instr_ids.append(item['instr_id'])
         self.scans = set(self.scans)
-        self.instr_ids = set(self.instr_ids)
+        self.instr_ids = set(instr_ids)
         self.graphs = load_nav_graphs(self.scans)
         self.distances = {}
         for scan,G in self.graphs.items():  # compute all shortest paths
@@ -71,17 +70,13 @@ class Evaluation(object):
             self.distances[gt['scan']][start][goal]
         )
 
-    def score(self, output_file):
+    def score(self, results):
         ''' Evaluate each agent trajectory based on how close it got to the goal location '''
         self.scores = defaultdict(list)
         instr_ids = set(self.instr_ids)
-        if type(output_file) is str:
-            with open(output_file) as f:
-                results = json.load(f)
-        else:
-            results = output_file
 
         print('result length', len(results))
+
         for item in results:
             # Check against expected ids
             if item['instr_id'] in instr_ids:
@@ -92,6 +87,7 @@ class Evaluation(object):
             assert len(instr_ids) == 0, 'Missing %d of %d instruction ids from %s - not in %s'\
                            % (len(instr_ids), len(self.instr_ids), ",".join(self.splits), output_file)
             assert len(self.scores['nav_errors']) == len(self.instr_ids)
+
         score_summary = {
             'nav_error': np.average(self.scores['nav_errors']),
             'oracle_error': np.average(self.scores['oracle_errors']),
