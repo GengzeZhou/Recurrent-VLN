@@ -10,6 +10,7 @@ class Param:
         self.parser.add_argument('--test_only', type=int, default=0, help='fast mode for testing')
 
         self.parser.add_argument('--iters', type=int, default=300000, help='training iterations')
+        self.parser.add_argument('--log_every', type=int, default=1000, help='log frequency')
         self.parser.add_argument('--name', type=str, default='default', help='experiment id')
         self.parser.add_argument('--vlnbert', type=str, default='oscar', help='oscar or prevalent')
         self.parser.add_argument('--train', type=str, default='listener')
@@ -23,6 +24,11 @@ class Param:
         self.parser.add_argument('--feature_size', type=int, default=2048)
         self.parser.add_argument("--loadOptim",action="store_const", default=False, const=True)
 
+        # distributional training (single-node, multiple-gpus)
+        self.parser.add_argument('--world_size', type=int, default=1, help='number of gpus')
+        self.parser.add_argument('--local_rank', type=int, default=-1)
+        self.parser.add_argument("--node_rank", type=int, default=0, help="Id of the node")
+    
         # Load the model from
         self.parser.add_argument("--load", default=None, help='path of the trained model')
 
