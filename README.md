@@ -8,11 +8,16 @@ Code of the **CVPR 2021 Oral** paper:<br>
 
 "*Neo : Are you saying I have to choose whether Trinity lives or dies? The Oracle : No, you've already made the choice. Now you have to understand it.*" --- [The Matrix Reloaded (2003)](https://www.imdb.com/title/tt0234215/).
 
+## 🎁 Features
+
+- [x] Enable DDP during training and inference.
+- [x] Support the latest version of Matterport3DSimulator.
+
 ## Prerequisites
 
 ### Installation
 
-Install the [Matterport3D Simulator](https://github.com/peteanderson80/Matterport3DSimulator). Notice that this code uses the [old version (v0.1)](https://github.com/peteanderson80/Matterport3DSimulator/tree/v0.1) of the simulator, but you can easily change to the latest version which supports batches of agents and it is much more efficient.
+Install the [Matterport3D Simulator](https://github.com/peteanderson80/Matterport3DSimulator).
 
 Please find the versions of packages in our environment [here](https://github.com/YicongHong/Recurrent-VLN-BERT/blob/main/recurrent-vln-bert.yml).
 
