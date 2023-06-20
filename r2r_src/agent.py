@@ -305,8 +305,13 @@ class Seq2SeqAgent(BaseAgent):
 
             # the first [CLS] token, initialized by the language BERT, serves
             # as the agent's state passing through time steps
-            if (t >= 1) or (args.vlnbert=='prevalent'):
-                language_features = torch.cat((h_t.unsqueeze(1), language_features[:,1:,:]), dim=1)
+            if ((t >= 1) or (args.vlnbert=='prevalent')):
+                if not args.cat_hidden_states or t == 0:
+                    language_features = torch.cat((h_t.unsqueeze(1), language_features[:,1:,:]), dim=1)
+                else:
+                    # states = torch.cat([hs.unsqueeze(1) for hs in hidden_states], dim=1)
+                    # language_features = torch.cat((states, language_features[:, t:, :]), dim=1)
+                    language_features = torch.cat((h_t.unsqueeze(1), language_features), dim=1)
 
             visual_temp_mask = (utils.length2mask(candidate_leng) == 0).long()
             visual_attention_mask = torch.cat((language_attention_mask, visual_temp_mask), dim=-1)
@@ -321,6 +326,7 @@ class Seq2SeqAgent(BaseAgent):
                             'token_type_ids':     token_type_ids,
                             'action_feats':       input_a_t,
                             # 'pano_feats':         f_t,
+                            'step':               t if (t>=1 and args.cat_hidden_states) else None,
                             'cand_feats':         candidate_feat}
             h_t, logit = self.vln_bert(**visual_inputs)
             hidden_states.append(h_t)
@@ -415,8 +421,15 @@ class Seq2SeqAgent(BaseAgent):
         if train_rl:
             # Last action in A2C
             input_a_t, candidate_feat, candidate_leng = self.get_input_feat(perm_obs)
-
-            language_features = torch.cat((h_t.unsqueeze(1), language_features[:,1:,:]), dim=1)
+            # the first [CLS] token, initialized by the language BERT, serves
+            # as the agent's state passing through time steps
+            if not args.cat_hidden_states or t == 0:
+                language_features = torch.cat((h_t.unsqueeze(1), language_features[:,1:,:]), dim=1)
+            else:
+                # states = torch.cat([hs.unsqueeze(1) for hs in hidden_states], dim=1)
+                # language_features = torch.cat((states, language_features[:, t:, :]), dim=1)
+                language_features = torch.cat((h_t.unsqueeze(1), language_features), dim=1)
+            
 
             visual_temp_mask = (utils.length2mask(candidate_leng) == 0).long()
             visual_attention_mask = torch.cat((language_attention_mask, visual_temp_mask), dim=-1)
@@ -431,6 +444,7 @@ class Seq2SeqAgent(BaseAgent):
                             'token_type_ids':     token_type_ids,
                             'action_feats':       input_a_t,
                             # 'pano_feats':         f_t,
+                            'step':               t+1 if (t>=1 and args.cat_hidden_states) else None,
                             'cand_feats':         candidate_feat}
             last_h_, _ = self.vln_bert(**visual_inputs)
 

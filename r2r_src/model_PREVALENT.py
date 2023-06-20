@@ -23,6 +23,7 @@ class VLNBERT(nn.Module):
         self.action_state_project = nn.Sequential(
             nn.Linear(hidden_size+args.angle_feat_size, hidden_size), nn.Tanh())
         self.action_LayerNorm = BertLayerNorm(hidden_size, eps=layer_norm_eps)
+        self.step_embed = nn.Embedding(args.maxAction, hidden_size)
 
         self.drop_env = nn.Dropout(p=args.featdropout)
         self.img_projection = nn.Linear(feature_size, hidden_size, bias=True)
@@ -34,7 +35,7 @@ class VLNBERT(nn.Module):
 
     def forward(self, mode, sentence, token_type_ids=None,
                 attention_mask=None, lang_mask=None, vis_mask=None,
-                position_ids=None, action_feats=None, pano_feats=None, cand_feats=None):
+                position_ids=None, action_feats=None, pano_feats=None, cand_feats=None, step=None):
 
         if mode == 'language':
             init_state, encoded_sentence = self.vln_bert(mode, sentence, attention_mask=attention_mask, lang_mask=lang_mask,)
@@ -46,13 +47,15 @@ class VLNBERT(nn.Module):
             state_action_embed = torch.cat((sentence[:,0,:], action_feats), 1)
             state_with_action = self.action_state_project(state_action_embed)
             state_with_action = self.action_LayerNorm(state_with_action)
+            if step is not None:
+                state_with_action = state_with_action + self.step_embed(torch.LongTensor([step-1]).to(state_with_action.device))
             state_feats = torch.cat((state_with_action.unsqueeze(1), sentence[:,1:,:]), dim=1)
 
             cand_feats[..., :-args.angle_feat_size] = self.drop_env(cand_feats[..., :-args.angle_feat_size])
 
             # logit is the attention scores over the candidate features
             h_t, logit, attended_language, attended_visual = self.vln_bert(mode, state_feats,
-                attention_mask=attention_mask, lang_mask=lang_mask, vis_mask=vis_mask, img_feats=cand_feats)
+                attention_mask=attention_mask, lang_mask=lang_mask, vis_mask=vis_mask, img_feats=cand_feats, step=step)
 
             # update agent's state, unify history, language and vision by elementwise product
             vis_lang_feat = self.vis_lang_LayerNorm(attended_language * attended_visual)

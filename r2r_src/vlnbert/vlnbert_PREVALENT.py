@@ -320,24 +320,35 @@ class LXRTXLayer(nn.Module):
         return visn_output
 
     def forward(self, lang_feats, lang_attention_mask,
-                      visn_feats, visn_attention_mask, tdx):
+                      visn_feats, visn_attention_mask, tdx, step):
 
         ''' visual self-attention with state '''
-        visn_att_output = torch.cat((lang_feats[:, 0:1, :], visn_feats), dim=1)
-        state_vis_mask = torch.cat((lang_attention_mask[:,:,:,0:1], visn_attention_mask), dim=-1)
+        if step is not None:
+            visn_att_output = torch.cat((lang_feats[:, 0:step, :], visn_feats), dim=1)
+            state_vis_mask = torch.cat((lang_attention_mask[:,:,:,0:step], visn_attention_mask), dim=-1)
+        else:
+            visn_att_output = torch.cat((lang_feats[:, 0:1, :], visn_feats), dim=1)
+            state_vis_mask = torch.cat((lang_attention_mask[:,:,:,0:1], visn_attention_mask), dim=-1)
 
         ''' state and vision attend to language '''
-        visn_att_output, cross_attention_scores = self.cross_att(lang_feats[:, 1:, :], lang_attention_mask[:, :, :, 1:], visn_att_output, state_vis_mask)
+        if step is not None:
+            visn_att_output, cross_attention_scores = self.cross_att(lang_feats[:, step:, :], lang_attention_mask[:, :, :, step:], visn_att_output, state_vis_mask)
+        else:
+            visn_att_output, cross_attention_scores = self.cross_att(lang_feats[:, 1:, :], lang_attention_mask[:, :, :, 1:], visn_att_output, state_vis_mask)
 
         language_attention_scores = cross_attention_scores[:, :, 0, :]
 
         state_visn_att_output = self.self_att(visn_att_output, state_vis_mask)
         state_visn_output = self.output_fc(state_visn_att_output[0])
 
-        visn_att_output = state_visn_output[:, 1:, :]
+        if step is not None:
+            visn_att_output = state_visn_output[:, step:, :]
+            visual_attention_scores = state_visn_att_output[1][:, :, 0, step:]
+        else:
+            visn_att_output = state_visn_output[:, 1:, :]
+            visual_attention_scores = state_visn_att_output[1][:, :, 0, 1:]
+        
         lang_att_output = torch.cat((state_visn_output[:, 0:1, :], lang_feats[:,1:,:]), dim=1)
-
-        visual_attention_scores = state_visn_att_output[1][:, :, 0, 1:]
 
         return lang_att_output, visn_att_output, language_attention_scores, visual_attention_scores
 
@@ -383,7 +394,12 @@ class VLNBert(BertPreTrainedModel):
         self.init_weights()
 
     def forward(self, mode, input_ids, token_type_ids=None,
-        attention_mask=None, lang_mask=None, vis_mask=None, position_ids=None, head_mask=None, img_feats=None):
+        attention_mask=None, lang_mask=None, vis_mask=None, position_ids=None, head_mask=None, img_feats=None, step=None):
+
+        # Concate all states, and generate the mask.
+        if step is not None:
+            state_mask = torch.ones((lang_mask.size()[0], step), dtype=lang_mask.dtype, device=lang_mask.device)
+            lang_mask = torch.cat((state_mask, lang_mask), dim=1)
 
         attention_mask = lang_mask
 
@@ -432,7 +448,7 @@ class VLNBert(BertPreTrainedModel):
             visn_output = img_embedding_output
 
             for tdx, layer_module in enumerate(self.addlayer):
-                lang_output, visn_output, language_attention_scores, visual_attention_scores = layer_module(lang_output, text_mask, visn_output, img_mask, tdx)
+                lang_output, visn_output, language_attention_scores, visual_attention_scores = layer_module(lang_output, text_mask, visn_output, img_mask, tdx, step)
 
             sequence_output = lang_output
             pooled_output = self.pooler(sequence_output)
@@ -444,7 +460,10 @@ class VLNBert(BertPreTrainedModel):
             language_attention_probs = nn.Softmax(dim=-1)(language_state_scores.clone()).unsqueeze(-1)
             visual_attention_probs = nn.Softmax(dim=-1)(visual_action_scores.clone()).unsqueeze(-1)
 
-            attended_language = (language_attention_probs * text_embeds[:, 1:, :]).sum(1)
+            if step is None:
+                attended_language = (language_attention_probs * text_embeds[:, 1:, :]).sum(1)
+            else:
+                attended_language = (language_attention_probs * text_embeds[:, step:, :]).sum(1)
             attended_visual = (visual_attention_probs * img_embedding_output).sum(1)
 
             return pooled_output, visual_action_scores, attended_language, attended_visual

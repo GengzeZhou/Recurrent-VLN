@@ -1,7 +1,9 @@
-name=Reborn-1.0
+name=Reborn-1.2-cat
 NUM_GPUS=1
 
 flag="--vlnbert prevalent
+
+      --cat_hidden_states
 
       --aug data/prevalent/prevalent_aug.json
       --test_only 0
@@ -11,8 +13,8 @@ flag="--vlnbert prevalent
 
       --train train
 
-      --features pano
-      --feature_size 768
+      --features places365
+      --feature_size 2048
       --maxAction 20
       --batchSize 8
       --feedback sample

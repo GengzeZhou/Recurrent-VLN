@@ -40,6 +40,7 @@ class Param:
         self.parser.add_argument("--mlWeight", dest='ml_weight', type=float, default=0.20)
         self.parser.add_argument("--teacherWeight", dest='teacher_weight', type=float, default=1.)
         self.parser.add_argument("--features", type=str, default='places365')
+        self.parser.add_argument("--cat_hidden_states", dest='cat_hidden_states', default=False, action='store_const', const=True)
 
         # Dropout Param
         self.parser.add_argument('--dropout', type=float, default=0.5)
