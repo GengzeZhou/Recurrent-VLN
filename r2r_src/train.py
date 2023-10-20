@@ -28,14 +28,11 @@ if not os.path.exists(log_dir):
 
 IMAGENET_FEATURES = 'img_features/ResNet-152-imagenet.tsv'
 PLACE365_FEATURES = 'img_features/ResNet-152-places365.tsv'
-PANO = '/home/gengze/Desktop/projects/Pano_DuET/datasets/R2R/features/panov3_linear_merged_vit_base_patch32_clip_448.laion2b_ft_in12k_in1k.hdf5'
 
 if args.features == 'imagenet':
     features = IMAGENET_FEATURES
 elif args.features == 'places365':
     features = PLACE365_FEATURES
-elif args.features == 'pano':
-    features = PANO
 
 print(args); print('')
 
@@ -52,22 +49,27 @@ def build_dataset(args, rank=0):
         featurized_scans = set([key.split("_")[0] for key in list(feat_dict.keys())])
         val_env_names = ['val_train_seen', 'val_seen', 'val_unseen']
 
+    train_env = None
+    aug_env = None
+    test_env = None
+    val_envs = {}
+
     # Create the training environment
-    train_episodes = prepare_dataset(args, splits=['train'])
-    train_env = R2RBatch(feat_dict, 
-        batch_size=args.batchSize, seed=971214+rank,
-        splits=['train'],
-        data=train_episodes, )
-    # Load the augmentation data
-    aug_path = args.aug
-    train_aug_episodes = prepare_dataset(args, splits=[aug_path])
-    aug_env = R2RBatch(feat_dict, 
-        batch_size=args.batchSize, seed=971214+rank,
-        splits=[aug_path], 
-        data=train_aug_episodes, name='aug', )
+    if args.train == 'train':
+        train_episodes = prepare_dataset(args, splits=['train'])
+        train_env = R2RBatch(feat_dict, 
+            batch_size=args.batchSize, seed=971214+rank,
+            splits=['train'],
+            data=train_episodes, )
+        # Load the augmentation data
+        aug_path = args.aug
+        train_aug_episodes = prepare_dataset(args, splits=[aug_path])
+        aug_env = R2RBatch(feat_dict, 
+            batch_size=args.batchSize, seed=971214+rank,
+            splits=[aug_path], 
+            data=train_aug_episodes, name='aug', )
 
     # Setup the validation data
-    val_envs = {}
     for split in val_env_names:
         val_episodes = prepare_dataset(args, splits=[split], allocate_rank=rank)
         val_envs[split] = (
@@ -79,8 +81,18 @@ def build_dataset(args, rank=0):
             ),
             Evaluation([split], featurized_scans, data=val_episodes),
         )
+    
+    # Setup the test data
+    if args.submit:
+        test_episodes = prepare_dataset(args, splits=['test'], allocate_rank=rank)
+        test_env = R2RBatch(
+            feat_dict, 
+            batch_size=args.batchSize, seed=971214+rank,
+            splits=['test'],
+            data=test_episodes,
+        )
 
-    return train_env, val_envs, aug_env
+    return train_env, val_envs, test_env, aug_env
 
 
 ''' train the listener '''
@@ -191,57 +203,63 @@ def train(train_env, val_envs, aug_env=None, n_iters=1000, log_every=10, rank=-1
                 record_file.close()
 
 
-def valid(train_env, val_envs, rank=-1):
+def valid(val_envs, rank=-1):
     default_gpu = is_default_gpu(args)
 
     agent = Seq2SeqAgent(
-        train_env, results_path="", episode_len=args.maxAction, rank=rank)
+        val_envs["val_train_seen"][0], results_path="", episode_len=args.maxAction, rank=rank)
 
     print("Loaded the listener model at iter %d from %s" % (
         agent.load(args.load), args.load))
 
-    for env_name, (env, evaluator) in val_envs.items():
+    if args.submit:
         agent.logs = defaultdict(list)
-        agent.env = env
+        agent.env = val_envs["test"]
 
         iters = None
         start_time = time.time()
         agent.test(use_dropout=False, feedback='argmax', iters=iters)
-        print(env_name, 'cost time: %.2fs' % (time.time() - start_time))
+        print('test_unseen', 'cost time: %.2fs' % (time.time() - start_time))
         result = agent.get_results()
         all_results = merge_dist_results(all_gather(result))
 
         if default_gpu:
-            if env_name != '':
-                score_summary, _ = evaluator.score(all_results)
-                loss_str = "Env name: %s" % env_name
-                for metric,val in score_summary.items():
-                    loss_str += ', %s: %.4f' % (metric, val)
-                print(loss_str)
-                record_file = open('./logs/%s/eval.txt'%(args.name), 'a')
-                record_file.write(loss_str + '\n')
-                record_file.close()
-                
-            if args.submit:
-                json.dump(
-                    all_results,
-                    open(os.path.join(log_dir, "submit_%s.json" % env_name), 'w'),
-                    sort_keys=True, indent=4, separators=(',', ': ')
-                )
+            json.dump(
+                all_results,
+                open(os.path.join(log_dir, "submit_%s.json" % "test_unseen"), 'w'),
+                sort_keys=True, indent=4, separators=(',', ': ')
+            )
+    else:
+        for env_name, (env, evaluator) in val_envs.items():
+            agent.logs = defaultdict(list)
+            agent.env = env
+
+            iters = None
+            start_time = time.time()
+            agent.test(use_dropout=False, feedback='argmax', iters=iters)
+            print(env_name, 'cost time: %.2fs' % (time.time() - start_time))
+            result = agent.get_results()
+            all_results = merge_dist_results(all_gather(result))
+
+            if default_gpu:
+                if env_name != '':
+                    score_summary, _ = evaluator.score(all_results)
+                    loss_str = "Env name: %s" % env_name
+                    for metric,val in score_summary.items():
+                        loss_str += ', %s: %.4f' % (metric, val)
+                    print(loss_str)
+                    record_file = open('./logs/%s/eval.txt'%(args.name), 'a')
+                    record_file.write(loss_str + '\n')
+                    record_file.close()
 
 
 if __name__ == "__main__":
 
     setup_seed()
 
-    # if args.world_size > 1:
-    #     rank = init_distributed(args)
-    #     torch.cuda.set_device(args.local_rank)
-    # else:
-    #     rank = 0
     rank = init_distributed(args)
     torch.cuda.set_device(args.local_rank)
-    train_env, val_envs, aug_env = build_dataset(args, rank=rank)
+    train_env, val_envs, test_env, aug_env = build_dataset(args, rank=rank)
 
     if args.train == 'train':
         train(
@@ -249,6 +267,10 @@ if __name__ == "__main__":
             n_iters=args.iters, log_every=args.log_every, rank=rank,
         )
     elif args.train == 'valid':
-        valid(val_envs, rank=rank)
+        if args.submit:
+            val_envs.update({'test': test_env})
+            valid(val_envs, rank=rank)
+        else:
+            valid(val_envs, rank=rank)
     else:
         assert False

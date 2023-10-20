@@ -1,11 +1,15 @@
 name=VLNBERT-test-Prevalent
 
+NUM_GPUS=1
+
 flag="--vlnbert prevalent
 
-      --submit 0
+      --submit 1
       --test_only 0
-
-      --train validlistener
+      --aug data/prevalent/prevalent_aug.json
+      
+      --world_size 1
+      --train valid
       --load snap/VLNBERT-PREVALENT-final/state_dict/best_val_unseen
 
       --features places365
@@ -22,5 +26,4 @@ flag="--vlnbert prevalent
       --featdropout 0.4
       --dropout 0.5"
 
-mkdir -p snap/$name
-CUDA_VISIBLE_DEVICES=1 python r2r_src/train.py $flag --name $name
+CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=${NUM_GPUS} r2r_src/train.py $flag --name $name

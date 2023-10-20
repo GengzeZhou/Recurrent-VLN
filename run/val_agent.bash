@@ -1,19 +1,19 @@
-name=Reborn-1.0
+name=VLNBERT-val-Prevalent
+
 NUM_GPUS=1
 
 flag="--vlnbert prevalent
 
-      --aug data/prevalent/prevalent_aug.json
+      --submit 0
       --test_only 0
-      --log_every 2000
-
+      --aug data/prevalent/prevalent_aug.json
+      
       --world_size 1
+      --train valid
+      --load snap/VLNBERT-PREVALENT-final/state_dict/best_val_unseen
 
-      --train train
-
-      --features pano
-      --feature_size 768
-      --maxAction 20
+      --features places365
+      --maxAction 15
       --batchSize 8
       --feedback sample
       --lr 1e-5
@@ -26,5 +26,4 @@ flag="--vlnbert prevalent
       --featdropout 0.4
       --dropout 0.5"
 
-# CUDA_VISIBLE_DEVICES=2 python r2r_src/train.py $flag --name $name
 CUDA_VISIBLE_DEVICES=0 python -m torch.distributed.launch --nproc_per_node=${NUM_GPUS} r2r_src/train.py $flag --name $name
