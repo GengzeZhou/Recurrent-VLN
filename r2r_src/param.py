@@ -87,8 +87,3 @@ args = param.args
 
 args.description = args.name
 args.IMAGENET_FEATURES = 'img_features/ResNet-152-imagenet.tsv'
-args.log_dir = 'snap/%s' % args.name
-
-if not os.path.exists(args.log_dir):
-    os.makedirs(args.log_dir)
-DEBUG_FILE = open(os.path.join('snap', args.name, "debug.log"), 'w')
