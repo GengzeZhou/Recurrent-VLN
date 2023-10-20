@@ -61,6 +61,13 @@ To replicate the performance reported in our paper, load the trained network wei
 ```bash
 bash run/test_agent.bash
 ```
+The results will be saved to `logs/VLNBERT-test-Prevalent/snap/submit_test_unseen.json`.
+
+Alternatively, you can run validate model performance locally on the validation sets:
+```bash
+bash run/val_agent.bash
+```
+The results will be saved to `logs/VLNBERT-val-Prevalent/eval.txt`.
 
 You can simply switch between the OSCAR-based and the PREVALENT-based VLN models by changing the arguments `vlnbert` (oscar or prevalent) and `load` (trained model paths).
 
